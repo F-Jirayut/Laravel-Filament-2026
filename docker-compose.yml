@@ -1,9 +1,9 @@
 services:
   # PHP Application
-  webapp:
+  laravel-filament-app:
     build:
       context: . 
-      dockerfile: docker/webapp/Dockerfile
+      dockerfile: docker/laravel-filament-app/Dockerfile
     container_name: filament-app
     restart: unless-stopped
     working_dir: /var/www
@@ -16,7 +16,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: docker/webapp/Dockerfile
+      dockerfile: docker/laravel-filament-app/Dockerfile
     container_name: filament-worker
     restart: unless-stopped
     # รัน Supervisor โดยอ้างอิงไฟล์คอนฟิกจาก volume
@@ -38,7 +38,7 @@ services:
     volumes:
       - ./:/var/www
     depends_on:
-      - webapp
+      - laravel-filament-app
     networks:
       - filament-network
 
@@ -46,6 +46,8 @@ services:
   db:
     image: postgres:16-alpine
     container_name: filament-db
+    ports:
+      - "${DB_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: ${DB_DATABASE}
       POSTGRES_USER: ${DB_USERNAME}
