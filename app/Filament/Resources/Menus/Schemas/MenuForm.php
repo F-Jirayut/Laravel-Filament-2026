@@ -1,0 +1,100 @@
+<?php
+
+namespace App\Filament\Resources\Menus\Schemas;
+
+use Filament\Forms\Components\CheckboxList;
+use Filament\Forms\Components\Hidden;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Toggle;
+use Filament\Schemas\Components\Grid;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Schema;
+use Spatie\Permission\Models\Permission;
+
+class MenuForm
+{
+    public static function configure(Schema $schema): Schema
+    {
+        return $schema
+            ->components([
+                Section::make('รายละเอียดเมนู')
+                    ->schema([
+                        Grid::make(2)->schema([
+                            TextInput::make('name')
+                                ->required()
+                                ->unique('menus', 'name', ignoreRecord: true),
+                            TextInput::make('icon'),
+                            TextInput::make('route'),
+                            TextInput::make('group_name'),
+                        ]),
+                    ]),
+
+                Section::make('ตั้งค่าสิทธิ์การเข้าถึง')
+                    ->schema([
+
+                        Hidden::make('old_permission_name')
+                            ->afterStateHydrated(fn ($component, $record) => $component->state($record?->permission_name)),
+
+                        TextInput::make('permission_name')
+                            ->label('Permission Name')
+                            ->formatStateUsing(fn ($state) => preg_replace('/^(view|create|update|delete)_/', '', $state ?? ''))
+                            ->datalist(function () {
+                                // ดึงชื่อ permission ทั้งหมดมา clean เอา prefix ออกเพื่อให้เหลือแต่ชื่อกลุ่ม
+                                // เช่น 'view_users' -> 'users'
+                                return Permission::pluck('name')
+                                    ->map(fn ($name) => preg_replace('/^(view|create|update|delete)_/', '', $name))
+                                    ->unique()
+                                    ->filter()
+                                    ->combine(
+                                        Permission::pluck('name')
+                                            ->map(fn ($name) => preg_replace('/^(view|create|update|delete)_/', '', $name))
+                                            ->unique()
+                                            ->filter()
+                                    )
+                                    ->toArray();
+                            }) // ดึงชื่อที่มีอยู่มาเป็นตัวเลือกตอนพิมพ์
+                            ->helperText('พิมพ์ชื่อสิทธิ์ใหม่ หรือเลือกจากรายการที่เคยมี')
+                            ->required(),
+
+                        CheckboxList::make('permission_actions')
+                            ->label('CRUD Permissions')
+                            ->options([
+                                'view' => 'View (ดู)',
+                                'create' => 'Create (สร้าง)',
+                                'update' => 'Update (แก้ไข)',
+                                'delete' => 'Delete (ลบ)',
+                            ])
+                            ->columns(4)
+                            ->default(['view', 'create', 'update', 'delete'])
+                            ->helperText('ระบบจะสร้าง permission ตาม action ที่เลือก เช่น view_book, create_book')
+                            ->afterStateHydrated(function (CheckboxList $component, $record) {
+                                if (! $record?->permission_name) {
+                                    return;
+                                }
+
+                                $baseName = preg_replace('/^(view|create|update|delete)_/', '', $record->permission_name);
+                                $actions = ['view', 'create', 'update', 'delete'];
+
+                                $checkedActions = collect($actions)
+                                    ->filter(fn (string $action): bool => Permission::where('name', "{$action}_{$baseName}")
+                                        ->where('guard_name', 'web')
+                                        ->exists())
+                                    ->values()
+                                    ->all();
+
+                                $component->state($checkedActions ?: ['view']);
+                            }),
+                    ]),
+
+                Section::make('อื่นๆ')
+                    ->schema([
+                        TextInput::make('sort_order')->numeric()->default(0),
+                        Toggle::make('is_active')->default(true),
+                        Toggle::make('generate_resource')
+                            ->label('Generate CRUD Resource')
+                            ->helperText('สร้าง Model, Migration และ Filament Resource อัตโนมัติด้วยฟิลด์ name/description')
+                            ->default(true),
+                    ]),
+            ]);
+    }
+}

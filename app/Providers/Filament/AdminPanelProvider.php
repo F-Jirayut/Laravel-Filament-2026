@@ -2,7 +2,10 @@
 
 namespace App\Providers\Filament;
 
+use App\Http\Middleware\CheckMenuActivation;
 use App\Models\Menu;
+use App\Models\User;
+use Filament\Facades\Filament;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -54,9 +57,6 @@ class AdminPanelProvider extends PanelProvider
                 FilamentInfoWidget::class,
             ])
 
-            // ⭐ Dynamic Sidebar จาก Database พร้อมตรวจสอบสิทธิ์
-            // ->navigationItems($this->getNavigationItems())
-
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -70,39 +70,53 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
+                CheckMenuActivation::class
             ]);
     }
 
-    /**
-     * ดึงเมนูจากฐานข้อมูลและตรวจสอบสิทธิ์ด้วย Spatie
-     */
-    protected function getNavigationItems(): array
+    public function boot(): void
     {
-        // ป้องกัน error ในกรณี migrate หรือยังไม่ได้ login
-        if (!Auth::check()) {
-            return [];
+        // ใช้ Filament::serving เพื่อรอให้ระบบ Auth พร้อมก่อน
+        Filament::serving(function () {
+            Filament::getCurrentPanel()->navigationItems(
+                $this->generateDynamicNavigation()
+            );
+        });
+    }
+
+    private function generateDynamicNavigation(): array
+    {
+        // ดึงข้อมูลเมนูที่ active และเรียงลำดับ
+        // คุณอาจจะดึงเฉพาะเมนูที่ไม่มี parent_id ถ้าต้องการทำ Dropdown (แต่ Filament Panel v3 เน้น Group)
+        $menus = Menu::where('is_active', true)
+            ->orderBy('sort_order')
+            ->get();
+
+        $navItems = [];
+
+        foreach ($menus as $menu) {
+            $navItems[] = NavigationItem::make($menu->name)
+                ->label($menu->name)
+                ->url($menu->route ? url($menu->route) : '#') // ตรวจสอบว่ามี route หรือไม่
+                ->icon($menu->icon ?? 'heroicon-o-chevron-right')
+                ->group($menu->group_name) // จัดกลุ่มตาม group_name ใน DB
+                ->sort($menu->sort_order)
+                ->visible(function () use ($menu) {
+                    // ถ้ามีระบบ Permission สามารถเช็คได้ที่นี่
+                    if ($menu->permission_name) {
+                        return auth()->user()?->can($menu->permission_name);
+                    }
+                    return true;
+                });
         }
 
-        $user = Auth::user();
+        // รวมเมนูคงที่ (Static) เช่น Analytics เข้าไปด้วย
+        // $navItems[] = NavigationItem::make('Analytics')
+        //     ->url('https://filament.pirsch.io', shouldOpenInNewTab: true)
+        //     ->icon('heroicon-o-presentation-chart-line')
+        //     ->group('Reports')
+        //     ->sort(100);
 
-        return Menu::query()
-            ->where('is_active', true)
-            ->orderBy('sort_order')
-            ->get()
-            ->filter(function ($menu) use ($user) {
-                // ถ้าไม่มี permission ให้เข้าถึงได้
-                if (empty($menu->permission_name)) {
-                    return true;
-                }
-
-                return $user->can($menu->permission_name);
-            })
-            ->map(function ($menu) {
-                return NavigationItem::make($menu->name)
-                    ->icon($menu->icon ?? 'heroicon-o-document-text')
-                    ->url(url($menu->route))
-                    ->sort($menu->sort_order);
-            })
-            ->toArray();
+        return $navItems;
     }
 }

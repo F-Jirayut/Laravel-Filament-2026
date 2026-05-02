@@ -23,7 +23,7 @@ class PostResource extends Resource
 
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedRectangleStack;
 
-    protected static ?string $recordTitleAttribute = 'post';
+    protected static ?string $recordTitleAttribute = 'name';
 
     public static function form(Schema $schema): Schema
     {
@@ -61,7 +61,33 @@ class PostResource extends Resource
     {
         return parent::getRecordRouteBindingEloquentQuery()
             ->withoutGlobalScopes([
-                // SoftDeletingScope::class,
+                SoftDeletingScope::class,
             ]);
     }
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return false;
+    }
+
+    public static function canViewAny(): bool
+    {
+        return auth()->user()?->can('view_post') ?? false;
+    }
+
+    public static function canCreate(): bool
+    {
+        return auth()->user()?->can('create_post') ?? false;
+    }
+
+    public static function canEdit($record): bool
+    {
+        return auth()->user()?->can('update_post') ?? false;
+    }
+
+    public static function canDelete($record): bool
+    {
+        return auth()->user()?->can('delete_post') ?? false;
+    }
+
 }

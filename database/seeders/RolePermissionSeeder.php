@@ -18,16 +18,27 @@ class RolePermissionSeeder extends Seeder
 
         // สร้าง Permissions ให้ครบตามเมนู
         $permissions = [
-            // Post Permissions
-            'view post',
-            'create post',
-            'edit post',
-            'delete post',
-
-            // User & System Permissions
-            'view user',
-            'view role',
-            'view permission',
+            'view_dashboard',
+            'view_post',
+            'create_post',
+            'update_post',
+            'delete_post',
+            'view_book',
+            'create_book',
+            'update_book',
+            'delete_book',
+            'view_user',
+            'create_user',
+            'update_user',
+            'delete_user',
+            'view_role',
+            'create_role',
+            'update_role',
+            'delete_role',
+            'view_menu',
+            'create_menu',
+            'update_menu',
+            'delete_menu',
         ];
 
         foreach ($permissions as $permission) {
@@ -51,7 +62,7 @@ class RolePermissionSeeder extends Seeder
         // กำหนด Permission ทั้งหมดให้ Admin
         $adminRole->syncPermissions(Permission::all());
 
-        // ค้นหา User ID = 3
+        // // ค้นหา User ID = 3
         $user = User::find(3);
 
         // หากไม่มี ให้ใช้ User คนแรก

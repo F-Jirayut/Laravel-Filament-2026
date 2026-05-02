@@ -19,6 +19,8 @@ COPY --from=composer:2.8 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www
 
+COPY docker/laravel-filament-app/php.ini /usr/local/etc/php/conf.d/custom.ini
+
 # 5. จัดการ User และ Permissions
 # สร้าง User www หากยังไม่มี และกำหนด Directory ให้ถูกต้อง
 RUN groupadd -g 1000 www && useradd -u 1000 -ms /bin/bash -g www www

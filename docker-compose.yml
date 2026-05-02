@@ -2,7 +2,7 @@ services:
   # PHP Application
   laravel-filament-app:
     build:
-      context: . 
+      context: .
       dockerfile: docker/laravel-filament-app/Dockerfile
     container_name: filament-app
     restart: unless-stopped
