@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Menus\Pages;
 
 use App\Filament\Resources\Menus\MenuResource;
+use App\Support\MenuCrudSupport;
 use Filament\Resources\Pages\EditRecord;
 use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
@@ -22,6 +23,7 @@ class EditMenu extends EditRecord
         $this->oldPermissionName = $data['old_permission_name'] ?? '';
         $this->permissionActions = $data['permission_actions'] ?? ['view'];
         $data['permission_name'] = $this->normalizePermissionName($data['permission_name']);
+        $data['crud_columns'] = app(MenuCrudSupport::class)->normalizeColumns($data['crud_columns'] ?? []);
 
         unset($data['permission_actions'], $data['old_permission_name'], $data['generate_resource']);
 

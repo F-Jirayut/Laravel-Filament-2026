@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Menus\Pages;
 
 use App\Filament\Resources\Menus\MenuResource;
 use App\Support\FilamentCrudGenerator;
+use App\Support\MenuCrudSupport;
 use Filament\Resources\Pages\CreateRecord;
 use Illuminate\Support\Str;
 use Spatie\Permission\Models\Permission;
@@ -22,11 +23,12 @@ class CreateMenu extends CreateRecord
         $this->permissionActions = $data['permission_actions'] ?? ['view'];
         $this->shouldGenerateResource = (bool) ($data['generate_resource'] ?? false);
         $data['permission_name'] = $this->normalizePermissionName($data['permission_name']);
+        $data['crud_columns'] = app(MenuCrudSupport::class)->normalizeColumns($data['crud_columns'] ?? []);
 
         if (blank($data['route'] ?? null) && $this->shouldGenerateResource) {
             $data['route'] = app(FilamentCrudGenerator::class)->routeFor(
-                $data['name'],
-                $this->permissionBase($data['permission_name'])
+                $this->permissionBase($data['permission_name']),
+                $data['route'] ?? null
             );
         }
 
@@ -58,7 +60,7 @@ class CreateMenu extends CreateRecord
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         if ($this->shouldGenerateResource) {
-            app(FilamentCrudGenerator::class)->generate($this->record->name, $baseName);
+            app(FilamentCrudGenerator::class)->generate($this->record);
         }
     }
 

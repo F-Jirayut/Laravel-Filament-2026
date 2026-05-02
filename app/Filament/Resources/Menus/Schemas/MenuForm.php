@@ -4,11 +4,14 @@ namespace App\Filament\Resources\Menus\Schemas;
 
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Hidden;
+use Filament\Forms\Components\Repeater;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Grid;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
+use App\Support\MenuCrudSupport;
 use Spatie\Permission\Models\Permission;
 
 class MenuForm
@@ -92,8 +95,53 @@ class MenuForm
                         Toggle::make('is_active')->default(true),
                         Toggle::make('generate_resource')
                             ->label('Generate CRUD Resource')
-                            ->helperText('สร้าง Model, Migration และ Filament Resource อัตโนมัติด้วยฟิลด์ name/description')
+                            ->helperText('สร้าง Model, Migration และ Resource บาง ๆ ที่ใช้ runtime กลางจากข้อมูลในฐานข้อมูล')
                             ->default(true),
+                    ]),
+
+                Section::make('CRUD Columns')
+                    ->schema([
+                        Repeater::make('crud_columns')
+                            ->label('Columns')
+                            ->default(app(MenuCrudSupport::class)->defaultColumns())
+                            ->schema([
+                                Grid::make(2)->schema([
+                                    TextInput::make('name')
+                                        ->label('Column Name')
+                                        ->required(),
+                                    TextInput::make('label')
+                                        ->label('Label')
+                                        ->required(),
+                                    Select::make('type')
+                                        ->label('Type')
+                                        ->options([
+                                            'string' => 'String',
+                                            'text' => 'Text',
+                                            'rich_text' => 'Rich Text',
+                                            'integer' => 'Integer',
+                                            'boolean' => 'Boolean',
+                                            'date' => 'Date',
+                                            'datetime' => 'Date Time',
+                                        ])
+                                        ->default('string')
+                                        ->required(),
+                                    Toggle::make('required')
+                                        ->default(false),
+                                    Toggle::make('searchable')
+                                        ->default(false),
+                                    Toggle::make('sortable')
+                                        ->default(false),
+                                    Toggle::make('show_in_form')
+                                        ->default(true),
+                                    Toggle::make('show_in_table')
+                                        ->default(true),
+                                    Toggle::make('show_in_infolist')
+                                        ->default(true),
+                                ]),
+                            ])
+                            ->collapsed()
+                            ->itemLabel(fn (array $state): ?string => $state['label'] ?? $state['name'] ?? null)
+                            ->columnSpanFull(),
                     ]),
             ]);
     }

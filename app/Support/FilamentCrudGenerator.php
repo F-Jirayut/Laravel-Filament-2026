@@ -2,32 +2,35 @@
 
 namespace App\Support;
 
+use App\Models\Menu;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Str;
 
 class FilamentCrudGenerator
 {
-    public function generate(string $name, string $permissionBase): array
+    public function generate(Menu $menu): array
     {
-        $names = $this->names($name, $permissionBase);
+        $support = app(MenuCrudSupport::class);
+        $permissionBase = $support->permissionBase($menu->permission_name);
+        $names = $support->names($permissionBase, $menu->route);
+        $columns = $support->normalizeColumns($menu->crud_columns);
         $created = [];
 
         $created = array_merge($created, $this->putFile(
             app_path("Models/{$names['model']}.php"),
-            $this->modelTemplate($names)
+            $this->modelTemplate($names, $columns)
         ));
 
         $created = array_merge($created, $this->putFile(
             database_path("factories/{$names['model']}Factory.php"),
-            $this->factoryTemplate($names)
+            $this->factoryTemplate($names, $columns)
         ));
 
         if (! Schema::hasTable($names['table'])) {
             $created = array_merge($created, $this->putFile(
                 database_path("migrations/{$this->migrationTimestamp()}_create_{$names['table']}_table.php"),
-                $this->migrationTemplate($names)
+                $this->migrationTemplate($names, $columns)
             ));
         }
 
@@ -37,28 +40,6 @@ class FilamentCrudGenerator
             "{$basePath}/{$names['resourceClass']}.php",
             $this->resourceTemplate($names)
         ));
-
-        $created = array_merge($created, $this->putFile(
-            "{$basePath}/Schemas/{$names['model']}Form.php",
-            $this->formTemplate($names)
-        ));
-
-        $created = array_merge($created, $this->putFile(
-            "{$basePath}/Schemas/{$names['model']}Infolist.php",
-            $this->infolistTemplate($names)
-        ));
-
-        $created = array_merge($created, $this->putFile(
-            "{$basePath}/Tables/{$names['pluralModel']}Table.php",
-            $this->tableTemplate($names)
-        ));
-
-        foreach (['List', 'Create', 'Edit', 'View'] as $page) {
-            $created = array_merge($created, $this->putFile(
-                "{$basePath}/Pages/{$page}{$names['model']}.php",
-                $this->pageTemplate($names, $page)
-            ));
-        }
 
         Artisan::call('migrate', ['--force' => true]);
         Artisan::call('optimize:clear');
@@ -70,36 +51,9 @@ class FilamentCrudGenerator
         ];
     }
 
-    public function routeFor(string $name, string $permissionBase): string
+    public function routeFor(string $permissionBase, ?string $route = null): string
     {
-        return "/admin/{$this->names($name, $permissionBase)['slug']}";
-    }
-
-    private function names(string $name, string $permissionBase): array
-    {
-        $base = Str::of($permissionBase ?: $name)
-            ->replace(['-', '/'], ' ')
-            ->snake()
-            ->lower()
-            ->toString();
-
-        $model = Str::studly(Str::singular($base));
-        $pluralModel = Str::studly(Str::plural($model));
-
-        return [
-            'base' => $base,
-            'model' => $model,
-            'modelVariable' => Str::camel($model),
-            'pluralModel' => $pluralModel,
-            'resourceFolder' => $pluralModel,
-            'resourceClass' => "{$model}Resource",
-            'table' => Str::plural($base),
-            'slug' => Str::of(Str::plural($base))->replace('_', '-')->toString(),
-            'permissionView' => "view_{$base}",
-            'permissionCreate' => "create_{$base}",
-            'permissionUpdate' => "update_{$base}",
-            'permissionDelete' => "delete_{$base}",
-        ];
+        return '/admin/' . app(MenuCrudSupport::class)->names($permissionBase, $route)['slug'];
     }
 
     private function putFile(string $path, string $contents): array
@@ -119,23 +73,25 @@ class FilamentCrudGenerator
         return now()->format('Y_m_d_His');
     }
 
-    private function modelTemplate(array $n): string
+    private function modelTemplate(array $names, array $columns): string
     {
+        $fillable = implode("', '", app(MenuCrudSupport::class)->fillableColumns($columns));
+
         return <<<PHP
 <?php
 
 namespace App\Models;
 
-use Database\Factories\\{$n['model']}Factory;
+use Database\Factories\\{$names['model']}Factory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['name', 'description'])]
-class {$n['model']} extends Model
+#[Fillable(['{$fillable}'])]
+class {$names['model']} extends Model
 {
-    /** @use HasFactory<{$n['model']}Factory> */
+    /** @use HasFactory<{$names['model']}Factory> */
     use HasFactory, SoftDeletes;
 
     protected static ?string \$recordTitleAttribute = 'name';
@@ -143,8 +99,23 @@ class {$n['model']} extends Model
 PHP;
     }
 
-    private function factoryTemplate(array $n): string
+    private function factoryTemplate(array $names, array $columns): string
     {
+        $properties = collect($columns)
+            ->map(function (array $column): string {
+                $fake = match ($column['type']) {
+                    'text', 'rich_text' => "fake()->paragraph()",
+                    'integer' => 'fake()->numberBetween(1, 1000)',
+                    'boolean' => 'fake()->boolean()',
+                    'date' => 'fake()->date()',
+                    'datetime' => 'fake()->dateTime()',
+                    default => 'fake()->sentence(3)',
+                };
+
+                return "            '{$column['name']}' => {$fake},";
+            })
+            ->implode("\n");
+
         return <<<PHP
 <?php
 
@@ -153,23 +124,26 @@ namespace Database\Factories;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 /**
- * @extends Factory<\App\Models\\{$n['model']}>
+ * @extends Factory<\App\Models\\{$names['model']}>
  */
-class {$n['model']}Factory extends Factory
+class {$names['model']}Factory extends Factory
 {
     public function definition(): array
     {
         return [
-            'name' => fake()->sentence(3),
-            'description' => fake()->paragraph(),
+{$properties}
         ];
     }
 }
 PHP;
     }
 
-    private function migrationTemplate(array $n): string
+    private function migrationTemplate(array $names, array $columns): string
     {
+        $columnLines = collect($columns)
+            ->map(fn (array $column): string => '            ' . app(MenuCrudSupport::class)->migrationColumnLine($column))
+            ->implode("\n");
+
         return <<<PHP
 <?php
 
@@ -184,10 +158,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('{$n['table']}', function (Blueprint \$table) {
+        Schema::create('{$names['table']}', function (Blueprint \$table) {
             \$table->id();
-            \$table->string('name');
-            \$table->text('description')->nullable();
+{$columnLines}
             \$table->timestamps();
             \$table->softDeletes();
         });
@@ -198,270 +171,36 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('{$n['table']}');
+        Schema::dropIfExists('{$names['table']}');
     }
 };
 PHP;
     }
 
-    private function resourceTemplate(array $n): string
+    private function resourceTemplate(array $names): string
     {
         return <<<PHP
 <?php
 
-namespace App\Filament\Resources\\{$n['resourceFolder']};
+namespace App\Filament\Resources\\{$names['resourceFolder']};
 
-use App\Filament\Resources\\{$n['resourceFolder']}\Pages\Create{$n['model']};
-use App\Filament\Resources\\{$n['resourceFolder']}\Pages\Edit{$n['model']};
-use App\Filament\Resources\\{$n['resourceFolder']}\Pages\List{$n['model']};
-use App\Filament\Resources\\{$n['resourceFolder']}\Pages\View{$n['model']};
-use App\Filament\Resources\\{$n['resourceFolder']}\Schemas\\{$n['model']}Form;
-use App\Filament\Resources\\{$n['resourceFolder']}\Schemas\\{$n['model']}Infolist;
-use App\Filament\Resources\\{$n['resourceFolder']}\Tables\\{$n['pluralModel']}Table;
-use App\Models\\{$n['model']};
+use App\Filament\Resources\GeneratedCrudResource;
+use App\Models\\{$names['model']};
 use BackedEnum;
-use Filament\Resources\Resource;
-use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
-use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
 
-class {$n['resourceClass']} extends Resource
+class {$names['resourceClass']} extends GeneratedCrudResource
 {
-    protected static ?string \$model = {$n['model']}::class;
+    protected static ?string \$model = {$names['model']}::class;
 
-    protected static ?string \$slug = '{$n['slug']}';
+    protected static ?string \$slug = '{$names['slug']}';
+
+    protected static ?string \$menuPermissionBase = '{$names['base']}';
 
     protected static string|BackedEnum|null \$navigationIcon = Heroicon::OutlinedRectangleStack;
 
     protected static ?string \$recordTitleAttribute = 'name';
-
-    public static function form(Schema \$schema): Schema
-    {
-        return {$n['model']}Form::configure(\$schema);
-    }
-
-    public static function infolist(Schema \$schema): Schema
-    {
-        return {$n['model']}Infolist::configure(\$schema);
-    }
-
-    public static function table(Table \$table): Table
-    {
-        return {$n['pluralModel']}Table::configure(\$table);
-    }
-
-    public static function getPages(): array
-    {
-        return [
-            'index' => List{$n['model']}::route('/'),
-            'create' => Create{$n['model']}::route('/create'),
-            'view' => View{$n['model']}::route('/{record}'),
-            'edit' => Edit{$n['model']}::route('/{record}/edit'),
-        ];
-    }
-
-    public static function getRecordRouteBindingEloquentQuery(): Builder
-    {
-        return parent::getRecordRouteBindingEloquentQuery()
-            ->withoutGlobalScopes([
-                SoftDeletingScope::class,
-            ]);
-    }
-
-    public static function shouldRegisterNavigation(): bool
-    {
-        return false;
-    }
-
-    public static function canViewAny(): bool
-    {
-        return auth()->user()?->can('{$n['permissionView']}') ?? false;
-    }
-
-    public static function canCreate(): bool
-    {
-        return auth()->user()?->can('{$n['permissionCreate']}') ?? false;
-    }
-
-    public static function canEdit(\$record): bool
-    {
-        return auth()->user()?->can('{$n['permissionUpdate']}') ?? false;
-    }
-
-    public static function canDelete(\$record): bool
-    {
-        return auth()->user()?->can('{$n['permissionDelete']}') ?? false;
-    }
 }
-PHP;
-    }
-
-    private function formTemplate(array $n): string
-    {
-        return <<<PHP
-<?php
-
-namespace App\Filament\Resources\\{$n['resourceFolder']}\Schemas;
-
-use Filament\Forms\Components\RichEditor;
-use Filament\Forms\Components\TextInput;
-use Filament\Schemas\Schema;
-
-class {$n['model']}Form
-{
-    public static function configure(Schema \$schema): Schema
-    {
-        return \$schema->components([
-            TextInput::make('name')
-                ->label('Name')
-                ->required()
-                ->maxLength(255)
-                ->columnSpanFull(),
-
-            RichEditor::make('description')
-                ->label('Description')
-                ->nullable()
-                ->columnSpanFull(),
-        ])->columns(1);
-    }
-}
-PHP;
-    }
-
-    private function infolistTemplate(array $n): string
-    {
-        return <<<PHP
-<?php
-
-namespace App\Filament\Resources\\{$n['resourceFolder']}\Schemas;
-
-use Filament\Infolists\Components\TextEntry;
-use Filament\Schemas\Components\Section;
-use Filament\Schemas\Schema;
-
-class {$n['model']}Infolist
-{
-    public static function configure(Schema \$schema): Schema
-    {
-        return \$schema
-            ->components([
-                Section::make('Information')
-                    ->schema([
-                        TextEntry::make('name')
-                            ->label('Name'),
-
-                        TextEntry::make('description')
-                            ->label('Description')
-                            ->html()
-                            ->placeholder('-')
-                            ->columnSpanFull(),
-
-                        TextEntry::make('created_at')
-                            ->label('Created At')
-                            ->dateTime('d M Y H:i'),
-
-                        TextEntry::make('updated_at')
-                            ->label('Updated At')
-                            ->dateTime('d M Y H:i'),
-                    ])
-                    ->columns(2),
-            ]);
-    }
-}
-PHP;
-    }
-
-    private function tableTemplate(array $n): string
-    {
-        return <<<PHP
-<?php
-
-namespace App\Filament\Resources\\{$n['resourceFolder']}\Tables;
-
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteAction;
-use Filament\Actions\DeleteBulkAction;
-use Filament\Actions\EditAction;
-use Filament\Actions\ForceDeleteAction;
-use Filament\Actions\ForceDeleteBulkAction;
-use Filament\Actions\RestoreAction;
-use Filament\Actions\RestoreBulkAction;
-use Filament\Actions\ViewAction;
-use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Filters\TrashedFilter;
-use Filament\Tables\Table;
-
-class {$n['pluralModel']}Table
-{
-    public static function configure(Table \$table): Table
-    {
-        return \$table
-            ->columns([
-                TextColumn::make('id')
-                    ->label('ID')
-                    ->sortable()
-                    ->searchable(),
-
-                TextColumn::make('name')
-                    ->label('Name')
-                    ->searchable()
-                    ->sortable()
-                    ->weight('bold'),
-
-                TextColumn::make('description')
-                    ->label('Description')
-                    ->html()
-                    ->limit(50)
-                    ->toggleable()
-                    ->wrap(),
-
-                TextColumn::make('created_at')
-                    ->label('Created At')
-                    ->dateTime('d M Y H:i')
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
-            ])
-            ->filters([
-                TrashedFilter::make(),
-            ])
-            ->recordActions([
-                ViewAction::make(),
-                EditAction::make(),
-                DeleteAction::make(),
-                RestoreAction::make(),
-                ForceDeleteAction::make(),
-            ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                    ForceDeleteBulkAction::make(),
-                    RestoreBulkAction::make(),
-                ]),
-            ])
-            ->defaultSort('id', 'desc');
-    }
-}
-PHP;
-    }
-
-    private function pageTemplate(array $n, string $page): string
-    {
-        $body = match ($page) {
-            'List' => "use Filament\\Actions\\CreateAction;\nuse Filament\\Resources\\Pages\\ListRecords;\n\nclass List{$n['model']} extends ListRecords\n{\n    protected static string \$resource = {$n['resourceClass']}::class;\n\n    protected function getHeaderActions(): array\n    {\n        return [\n            CreateAction::make(),\n        ];\n    }\n}",
-            'Create' => "use Filament\\Resources\\Pages\\CreateRecord;\n\nclass Create{$n['model']} extends CreateRecord\n{\n    protected static string \$resource = {$n['resourceClass']}::class;\n}",
-            'Edit' => "use Filament\\Actions\\DeleteAction;\nuse Filament\\Actions\\ForceDeleteAction;\nuse Filament\\Actions\\RestoreAction;\nuse Filament\\Actions\\ViewAction;\nuse Filament\\Resources\\Pages\\EditRecord;\n\nclass Edit{$n['model']} extends EditRecord\n{\n    protected static string \$resource = {$n['resourceClass']}::class;\n\n    protected function getHeaderActions(): array\n    {\n        return [\n            ViewAction::make(),\n            DeleteAction::make(),\n            ForceDeleteAction::make(),\n            RestoreAction::make(),\n        ];\n    }\n}",
-            'View' => "use Filament\\Actions\\EditAction;\nuse Filament\\Resources\\Pages\\ViewRecord;\n\nclass View{$n['model']} extends ViewRecord\n{\n    protected static string \$resource = {$n['resourceClass']}::class;\n\n    protected function getHeaderActions(): array\n    {\n        return [\n            EditAction::make(),\n        ];\n    }\n}",
-        };
-
-        return <<<PHP
-<?php
-
-namespace App\Filament\Resources\\{$n['resourceFolder']}\Pages;
-
-use App\Filament\Resources\\{$n['resourceFolder']}\\{$n['resourceClass']};
-{$body}
 PHP;
     }
 }
